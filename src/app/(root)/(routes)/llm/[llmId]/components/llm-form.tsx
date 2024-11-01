@@ -1,4 +1,5 @@
 "use client";
+import axios from "axios";
 import * as z from "zod";
 import { Category, LLM } from "@prisma/client";
 
@@ -26,6 +27,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Wand2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { useRouter } from "next/navigation";
 
 // TODO: Remove this shit
 const PREAMBLE = `
@@ -100,6 +103,8 @@ const formSchema = z.object({
 });
 
 const LLMform = ({ categories, initialData }: LLMFormProps) => {
+  const { toast } = useToast();
+  const router = useRouter();
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: initialData || {
@@ -115,7 +120,25 @@ const LLMform = ({ categories, initialData }: LLMFormProps) => {
   const isLoading = form.formState.isSubmitting;
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
-    console.log(values);
+    try {
+      if (initialData) {
+        // update llm functionality
+        await axios.patch(`/api/llm/${initialData.id}`, values);
+      } else {
+        // create llm functionality
+        await axios.post("/api/llm", values);
+      }
+      toast({
+        description: "Success.",
+      });
+      router.refresh();
+      router.push("/");
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        description: "Something went wrong",
+      });
+    }
   };
 
   return (

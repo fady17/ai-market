@@ -6,9 +6,9 @@ interface LLMidPageProps {
     llmId: string;
   };
 }
+
 const LLMidPage = async ({ params }: LLMidPageProps) => {
   // TODO: Check subscription
-
   const llm = await prismadb.lLM.findUnique({
     where: {
       id: params.llmId,
