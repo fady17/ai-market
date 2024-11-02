@@ -39,7 +39,7 @@ const ChatMessages = ({ messages = [], isLoading, llm }: ChatMessagesProps) => {
           key={message.content}
           role={message.role}
           content={message.content}
-          src={message.src}
+          src={llm.src}
         />
       ))}
       {isLoading && <ChatMessage role="system" src={llm.src} isLoading />}
