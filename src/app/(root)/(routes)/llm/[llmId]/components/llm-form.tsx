@@ -133,6 +133,7 @@ const LLMform = ({ categories, initialData }: LLMFormProps) => {
       });
       router.refresh();
       router.push("/");
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
     } catch (error) {
       toast({
         variant: "destructive",

@@ -2,35 +2,49 @@ import Categories from "@/components/categories";
 import Llm from "@/components/llm";
 import SearchInput from "@/components/search-input";
 import prismadb from "@/lib/prismadb";
-// import { SignedIn, UserButton } from "@clerk/nextjs";
 
 interface RootPageProps {
-  searchParams: {
-    categoryId: string;
-    name: string;
-  };
+  searchParams: Promise<{
+    categoryId?: string;
+    name?: string;
+  }>;
 }
 
 const RootPage = async ({ searchParams }: RootPageProps) => {
-  const data = await prismadb.lLM.findMany({
-    where: {
-      categoryId: searchParams.categoryId,
-      name: {
-        search: searchParams.name,
+  // Await the search params
+  const params = await searchParams;
+
+  // Construct where clause after awaiting params
+  const where: any = {};
+
+  if (params?.categoryId) {
+    where.categoryId = params.categoryId;
+  }
+
+  if (params?.name) {
+    where.name = {
+      search: params.name,
+    };
+  }
+
+  // Fetch data using the constructed where clause
+  const [data, categories] = await Promise.all([
+    prismadb.lLM.findMany({
+      where,
+      orderBy: {
+        createdAt: "desc",
       },
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-    include: {
-      _count: {
-        select: {
-          messages: true,
+      include: {
+        _count: {
+          select: {
+            messages: true,
+          },
         },
       },
-    },
-  });
-  const categories = await prismadb.category.findMany();
+    }),
+    prismadb.category.findMany(),
+  ]);
+
   return (
     <div className="h-full p-4 space-y-2">
       <SearchInput />
@@ -39,4 +53,5 @@ const RootPage = async ({ searchParams }: RootPageProps) => {
     </div>
   );
 };
+
 export default RootPage;
