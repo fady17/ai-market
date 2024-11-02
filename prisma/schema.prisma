@@ -1,41 +1,52 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
-  
+  previewFeatures = ["fullTextSearch", "fullTextIndex"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
 model Category {
-  id        String @id @default(uuid())
-  name      String
-  llm       LLM[]
+  id   String @id @default(uuid())
+  name String
+  llm  LLM[]
 }
 
 model LLM {
-  id              String @id @default(uuid())
-  userId          String
-  userName        String
-  src             String
-  name            String @db.Text
-  description     String
-  instructions    String @db.Text
-  seed            String @db.Text
-
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  category        Category @relation(fields: [categoryId], references: [id])
-  categoryId      String
+  id           String    @id @default(uuid())
+  userId       String
+  userName     String
+  src          String
+  name         String    @db.Text
+  description  String
+  instructions String    @db.Text
+  seed         String    @db.Text
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  categoryId   String
+  category     Category  @relation(fields: [categoryId], references: [id])
+  messages     Message[]
 
   @@index([categoryId])
-  
+  @@fulltext([name])
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  role      Role
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  llmId     String
+  userId    String
+  llm       LLM      @relation(fields: [llmId], references: [id], onDelete: Cascade)
+
+  @@index([llmId])
+}
+
+enum Role {
+  user
+  system
 }
