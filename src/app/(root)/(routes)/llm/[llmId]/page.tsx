@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import prismadb from "@/lib/prismadb";
 import LLMform from "./components/llm-form";
+import { auth } from "@clerk/nextjs/server";
 
 interface LLMidPageProps {
   params: Promise<{
@@ -11,6 +12,12 @@ interface LLMidPageProps {
 const LLMidPage = async ({ params }: LLMidPageProps) => {
   // Await the params
   const { llmId } = await params;
+  const { userId, redirectToSignIn } = await auth();
+
+  //check if logged in
+  if (!userId) {
+    return redirectToSignIn();
+  }
 
   // Handle empty llmId
   if (!llmId) {
@@ -33,6 +40,7 @@ const LLMidPage = async ({ params }: LLMidPageProps) => {
       prismadb.lLM.findUnique({
         where: {
           id: llmId,
+          userId,
         },
       }),
       prismadb.category.findMany(),
