@@ -1,11 +1,16 @@
 generator client {
   provider = "prisma-client-js"
-  previewFeatures = ["fullTextSearch", "fullTextIndex"]
+  // previewFeatures = ["fullTextSearch", "fullTextIndex"]
 }
 
+// datasource db {
+//   provider = "mysql"
+//   url      = env("DATABASE_URL")
+// }
 datasource db {
-  provider = "mysql"
-  url      = env("DATABASE_URL")
+  provider = "postgresql"
+  url = env("DATABASE_URL") // uses connection pooling
+  directUrl = env("POSTGRES_URL_NON_POOLING") // uses a direct connection
 }
 
 model Category {
@@ -30,7 +35,7 @@ model LLM {
   messages     Message[]
 
   @@index([categoryId])
-  @@fulltext([name])
+  // @@fulltext([name])
 }
 
 model Message {
@@ -49,4 +54,13 @@ model Message {
 enum Role {
   user
   system
+}
+
+model UserSubscribtion {
+  id                      String @id @default(uuid())
+  userId                  String @unique
+  stripeCustomerId        String? @unique @map(name:"stripe_customer_id")
+  stripeSubscriptionId    String? @unique @map(name:"stripe_subscribtion_id")
+  stripePriceId           String? @unique @map(name:"stripe_price_id")
+  stripeCurrentPeriodEnd  DateTime? @unique @map(name:"stripe_current_period_end")
 }

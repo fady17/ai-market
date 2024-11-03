@@ -1,156 +1,142 @@
-import { auth, currentUser } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
-import { MemoryManager } from "@/lib/memory";
+// app/api/chat/[chatId]/route.ts
+import { StreamingTextResponse, Message as VercelMessage } from "ai";
+import { Groq } from "groq-sdk";
+import { MemoryService } from "@/lib/memory";
+import { auth } from "@clerk/nextjs/server";
 import { rateLimit } from "@/lib/rate-limit";
 import prismadb from "@/lib/prismadb";
-import Groq from "groq-sdk";
-import { StreamingTextResponse } from "ai";
+
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY!,
+});
+
+export const runtime = "edge";
 
 export async function POST(
-  request: Request,
+  req: Request,
   { params }: { params: { chatId: string } }
-): Promise<NextResponse | StreamingTextResponse> {
+) {
   try {
-    const { prompt } = await request.json();
-    const user = await currentUser();
+    const { messages } = await req.json();
+    const { userId } = auth();
 
-    if (!user || !user.firstName || !user.id) {
-      return new NextResponse("unauthorized", { status: 401 });
+    if (!userId) {
+      return new Response("Unauthorized", { status: 401 });
     }
 
-    const identifier = request.url + "-" + user.id;
+    // Rate limiting
+    const identifier = req.url + "-" + userId;
     const { success } = await rateLimit(identifier);
 
     if (!success) {
-      return new NextResponse("Rate limit exceeded", { status: 429 });
+      return new Response("Rate limit exceeded", { status: 429 });
     }
 
-    const llm = await prismadb.lLM.update({
+    // Get or create chat in database
+    const chat = await prismadb.chat.update({
       where: {
         id: params.chatId,
       },
       data: {
         messages: {
           create: {
-            content: prompt,
+            content: messages[messages.length - 1].content,
             role: "user",
-            userId: user.id,
+            userId,
           },
         },
       },
     });
 
-    if (!llm) {
-      return new NextResponse("llm not found", { status: 404 });
+    if (!chat) {
+      return new Response("Chat not found", { status: 404 });
     }
 
-    const name = llm.id;
-    const llm_file_name = name + ".txt";
+    // Initialize memory service
+    const memoryService = await MemoryService.getInstance();
 
-    const llmKey = {
-      llmName: name,
-      userId: user.id,
-      modelName: "llama3-8b-8192",
+    const memoryKey = {
+      chatId: params.chatId,
+      userId,
+      modelName: "mixtral-8x7b-32768",
     };
 
-    const memoryManager = await MemoryManager.getInstance();
+    // Get chat history
+    const recentHistory = await memoryService.getLatestHistory(memoryKey);
 
-    const records = await memoryManager.redisLatestHistory(llmKey);
-
-    if (records.length === 0) {
-      await memoryManager.seedChatHistory(llm.seed, "\n\n", llmKey);
-    }
-
-    await memoryManager.writeToHistory("User: " + prompt + "\n", llmKey);
-
-    const recentChatHistory = await memoryManager.redisLatestHistory(llmKey);
-
-    const similarDocs = await memoryManager.vectorSearch(
-      recentChatHistory,
-      llm_file_name
+    // Write latest user message to history
+    await memoryService.writeToHistory(
+      `User: ${messages[messages.length - 1].content}`,
+      memoryKey
     );
 
-    let relevantHistory = "";
+    // Get relevant context from vector search
+    const similarDocs = await memoryService.vectorSearch(
+      messages[messages.length - 1].content,
+      params.chatId
+    );
 
-    if (!!similarDocs && similarDocs.length !== 0) {
-      relevantHistory = similarDocs.map((doc) => doc.pageContent).join("\n");
-    }
+    const relevantHistory = similarDocs
+      ? similarDocs.map((doc) => doc.pageContent).join("\n")
+      : "";
 
-    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+    // Prepare messages for the AI
+    const contextMessages = [
+      {
+        role: "system",
+        content: `You have access to relevant chat history and context. Use this to provide informed responses.
+                 
+                 Relevant history:
+                 ${relevantHistory}
+                 
+                 Recent conversation:
+                 ${recentHistory}`,
+      },
+      ...messages.map((message: VercelMessage) => ({
+        role: message.role,
+        content: message.content,
+      })),
+    ];
 
-    const stream = new TransformStream();
-    const writer = stream.writable.getWriter();
-    const encoder = new TextEncoder();
+    const response = await groq.chat.completions.create({
+      messages: contextMessages,
+      model: "mixtral-8x7b-32768",
+      temperature: 0.7,
+      max_tokens: 1000,
+      stream: true,
+    });
 
-    let fullResponse = "";
-
-    // Create and handle the completion in an async function
-    const handleStream = async () => {
+    // Store assistant's response
+    response.body.on("data", async (chunk) => {
       try {
-        const completion = await groq.chat.completions.create({
-          messages: [
-            {
-              role: "system",
-              content: `${llm.instructions}\n\nRelevant history: ${relevantHistory}`,
-            },
-            {
-              role: "user",
-              content: `${recentChatHistory}\n\nUser: ${prompt}`,
-            },
-          ],
-          model: "llama3-8b-8192",
-          temperature: 0.7,
-          max_tokens: 1024,
-          stream: true,
-        });
+        const text = chunk.toString();
+        if (text.trim()) {
+          await memoryService.writeToHistory(`Assistant: ${text}`, memoryKey);
 
-        for await (const chunk of completion) {
-          const content = chunk.choices[0]?.delta?.content || "";
-          if (content) {
-            fullResponse += content;
-            await writer.write(encoder.encode(content));
-          }
-        }
-
-        // Store the complete response
-        if (fullResponse.length > 0) {
-          await memoryManager.writeToHistory(
-            "Assistant: " + fullResponse.trim(),
-            llmKey
-          );
-
-          await prismadb.lLM.update({
+          await prismadb.chat.update({
             where: {
               id: params.chatId,
             },
             data: {
               messages: {
                 create: {
-                  content: fullResponse.trim(),
-                  role: "system",
-                  userId: user.id,
+                  content: text,
+                  role: "assistant",
+                  userId,
                 },
               },
             },
           });
         }
       } catch (error) {
-        console.error("Stream processing error:", error);
-        await writer.write(
-          encoder.encode("An error occurred during processing.")
-        );
-      } finally {
-        await writer.close();
+        console.error("Error storing assistant response:", error);
       }
-    };
+    });
 
-    // Start processing the stream
-    handleStream().catch(console.error);
-
-    return new StreamingTextResponse(stream.readable);
+    return new StreamingTextResponse(response.body);
   } catch (error) {
-    console.log("[CHAT_POST]", error);
-    return new NextResponse("Internal Error", { status: 500 });
+    console.error("[CHAT_POST]", error);
+    return new Response("Internal Error", { status: 500 });
   }
 }
 // import { auth, currentUser } from "@clerk/nextjs/server";
